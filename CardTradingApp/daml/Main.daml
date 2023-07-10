@@ -1,0 +1,283 @@
+module Main where
+
+import Daml.Script
+
+type CardId = ContractId Card
+type AccountId = ContractId Account
+
+-- Custom data for Party creation
+data Parties = Parties with
+  company : Party
+  alice : Party
+  bob : Party
+
+-- Custom Data for Card
+data CardDetails = CardDetails
+  with 
+    name : Text
+    pokemontype : Text
+    attack : Text
+      deriving (Show, Eq)
+
+template Card
+  with
+    issuer : Party
+    owner  : Party
+    card   : Text
+    --valuation : Optional Text
+    carddetails : CardDetails
+    copy   : Text
+  where
+    ensure card /= ""
+    signatory issuer
+    observer owner
+    choice GivePokemon : CardId
+      with
+        newOwner : Party
+      controller owner
+      do
+        assert (newOwner /= owner)
+        create this 
+          with
+            owner = newOwner
+    nonconsuming choice GiveFakePokemon : CardId
+      with
+        newOwner : Party
+      controller owner
+      do create this with
+          owner = newOwner
+          copy = "Copy"
+
+
+type AccountKey = (Party, Text)
+
+template Account with
+    companyname : Party
+    balance : Decimal
+    owner : Party
+    card : [CardId]
+  where
+    signatory owner
+    key owner : Party
+    maintainer key
+    choice AddCard : AccountId
+      with
+        newCard : [CardId]
+      controller owner
+      do create this with
+          card = newCard
+    choice AmendBalance : AccountId
+      with
+        newBalance : Decimal
+      controller owner
+      do 
+        assert (newBalance > 0.0)
+        create this 
+          with
+            balance = newBalance
+
+-- Checks if enough money in balance to withdraw
+canWithdraw: Decimal -> Bool
+canWithdraw x =
+  if (x <= 0.0) then False
+  else True
+
+-- adds Discount on multiple Cards
+discountMultiple: [Decimal] -> Decimal -> [Decimal]
+discountMultiple x y = map (* y) x
+
+-- Takes Price and Balance, if Balance 0, cannot buy
+canBuy: Int -> Int -> Optional Int
+canBuy _ 0 = None
+canBuy x y = Some (x-y)
+
+-----------------------------------------------------------------
+
+createUserMod : Text -> Text -> Script(Party, UserId)
+createUserMod name id = script do
+  party  <-allocatePartyWithHint name (PartyIdHint id)
+  userId <- validateUserId id
+  createUser (User userId (Some party)) [CanActAs party]
+  return (party, userId)
+
+userSetup : Script Parties
+userSetup = script do
+  companyS <- createUserMod "Company" "company"
+  aliceS <- createUserMod "Alice" "alice"
+  bobS <- createUserMod "Bob" "bob"
+
+  return (Parties with
+    company = companyS._1 
+    alice = aliceS._1
+    bob = bobS._1)
+
+
+setup: Script Parties
+setup = script do
+  (parties@Parties{..}) <- userSetup
+  return parties
+-- User Setup End
+
+testingWorkflow: Script ()
+testingWorkflow = script do
+  (parties@Parties{..}) <- userSetup 
+
+  -- Create Accounts
+  companyAcc <- submit company do
+    createCmd Account with
+      companyname = company
+      balance = 0.0
+      owner = company
+      card = []
+
+  aliceAcc <- submit alice do
+    createCmd Account with
+      companyname = company
+      balance = 0.0
+      owner = alice
+      card = []
+-- End Create Accounts
+
+-- Create Card
+  aliceCard <- submit alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = "Pokemon"
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"
+
+--AddCard choice
+  aliceAcc2 <- submit alice do 
+    exerciseCmd aliceAcc AddCard with newCard = [aliceCard]
+  
+--Amend Balance choice 
+  aliceAcc3 <- submit alice do 
+    exerciseCmd aliceAcc2 AmendBalance with newBalance = 1000.0
+  
+-- GivePokemon and GiveFakePokemon choices
+  bobCard <- submit alice do
+    exerciseCmd aliceCard GivePokemon with newOwner = bob
+
+  aliceCard2 <- submit bob do
+    exerciseCmd bobCard GivePokemon with newOwner = alice
+
+  bobCardFake <- submit alice do
+    exerciseCmd aliceCard2 GiveFakePokemon with newOwner = bob
+
+-- Withdraw Test Start
+  [(cid, contract)] <- query @Account alice
+  debug $ contract
+  debug $ "Below should return Can Withdraw"
+  if canWithdraw contract.balance then debug $ "Can Withdraw"
+  else debug $ "No Money"
+
+  aliceAcc4 <- submit alice do 
+    exerciseCmd aliceAcc3 AmendBalance with newBalance = 23.0
+  
+  [(cid, contract)] <- query @Account alice
+  debug $ contract
+  debug $ "Below should return No Money"
+  if canWithdraw contract.balance then debug $ "Can Withdraw"
+  else debug $ "No Money"
+-- Withdraw Test End
+
+--Discount Test Start
+  debug $ discountMultiple [14.0, 15.0] 0.10
+--Discount Test End
+
+-- canBuy Test Start
+  debug $ canBuy 5 0
+  debug $ canBuy 5 2
+-- canBuy Test End
+
+  pure()
+
+--Happy Path 1
+giveCardToBob: Script (ContractId Card)
+giveCardToBob = do
+  (parties@Parties{..}) <- userSetup 
+  aliceCard <- submit alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = "Pokemon"
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"  
+  submit alice do
+    exerciseCmd aliceCard GivePokemon with newOwner = bob
+
+--Happy Path 2
+giveFakeCardToBob: Script (ContractId Card)
+giveFakeCardToBob = do
+  (parties@Parties{..}) <- userSetup 
+  aliceCard <- submit alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = "Pokemon"
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"  
+  submit alice do
+    exerciseCmd aliceCard GiveFakePokemon with newOwner = bob
+
+--Happy Path 3
+addCardToAccount: Script(ContractId Account)
+addCardToAccount = do
+  (parties@Parties{..}) <- userSetup 
+  aliceAcc <- submit alice do
+    createCmd Account with
+      companyname = company
+      balance = 0.0
+      owner = alice
+      card = []
+
+  aliceCard <- submit alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = "Pokemon"
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"
+
+  submit alice do 
+    exerciseCmd aliceAcc AddCard with newCard = [aliceCard]
+
+--Unhappy Path 1
+cannotCreateCardWithNoName: Script ()
+cannotCreateCardWithNoName = do
+  (parties@Parties{..}) <- userSetup 
+  submitMustFail alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = ""
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"    
+
+--Unhappy Path 2
+cannotGiveCardToSelf: Script()
+cannotGiveCardToSelf = do
+  (parties@Parties{..}) <- userSetup 
+  aliceCard <- submit alice do
+    createCmd Card with
+      issuer = alice
+      owner = alice
+      card = "Pokemon"
+      carddetails = CardDetails "Pikachu" "Electric" "Lightning Bolt"
+      copy = "Original"  
+  submitMustFail alice do
+    exerciseCmd aliceCard GivePokemon with newOwner = alice
+
+--Unhappy Path 3
+negativeAccountBalance: Script()
+negativeAccountBalance = do
+  (parties@Parties{..}) <- userSetup 
+  aliceAcc <- submit alice do
+    createCmd Account with
+      companyname = company
+      balance = 0.0
+      owner = alice
+      card = []
+  submitMustFail alice do 
+    exerciseCmd aliceAcc AmendBalance with newBalance = -1000.0
