@@ -19,6 +19,7 @@ data CardDetails = CardDetails
     attack : Text
       deriving (Show, Eq)
 
+--Card Template 
 template Card
   with
     issuer : Party
@@ -77,22 +78,26 @@ template Account with
             balance = newBalance
 
 -- Checks if enough money in balance to withdraw
+-- Future implementation: Take data from contracts
 canWithdraw: Decimal -> Bool
 canWithdraw x =
   if (x <= 0.0) then False
   else True
 
 -- adds Discount on multiple Cards
+-- Future implementation: Take data from contracts
 discountMultiple: [Decimal] -> Decimal -> [Decimal]
 discountMultiple x y = map (* y) x
 
 -- Takes Price and Balance, if Balance 0, cannot buy
+-- Future implementation: Take data from contracts and update accordingly
 canBuy: Int -> Int -> Optional Int
 canBuy _ 0 = None
 canBuy x y = Some (x-y)
 
 -----------------------------------------------------------------
 
+--Helper script to create test users
 createUserMod : Text -> Text -> Script(Party, UserId)
 createUserMod name id = script do
   party  <-allocatePartyWithHint name (PartyIdHint id)
@@ -100,6 +105,7 @@ createUserMod name id = script do
   createUser (User userId (Some party)) [CanActAs party]
   return (party, userId)
 
+--Helper script to create test users
 userSetup : Script Parties
 userSetup = script do
   companyS <- createUserMod "Company" "company"
@@ -111,13 +117,14 @@ userSetup = script do
     alice = aliceS._1
     bob = bobS._1)
 
-
+-- Setup script for initial user creations
 setup: Script Parties
 setup = script do
   (parties@Parties{..}) <- userSetup
   return parties
 -- User Setup End
 
+--Script to test entire workflow
 testingWorkflow: Script ()
 testingWorkflow = script do
   (parties@Parties{..}) <- userSetup 
