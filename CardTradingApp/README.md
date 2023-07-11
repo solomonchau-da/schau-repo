@@ -25,7 +25,7 @@ canWithdraw: Function that uses if..else statement to check if there are enough 
 discountMultiple: Function that uses maps to apply a discount for all specified contracts.
 canBuy: Function to check if there is a large enough balance to buy specific cards.  
 
-### III. Compiling & Testing
+### IV. Compiling & Testing
 To compile and test, run the pre-written script in the `Test.daml` under /daml OR run:
 ```
 $ daml start
